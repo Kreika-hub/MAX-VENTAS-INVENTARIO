@@ -155,6 +155,27 @@ export default function Home() {
   const [unlocked, setUnlocked] = useState(!PIN);
   const [pinInput, setPinInput] = useState('');
   const [tab, setTab] = useState<'inventario' | 'vender' | 'metricas'>('inventario');
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
+
+  useEffect(() => {
+    setIsIOS(/iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase()) && !(window as any).MSStream);
+    const handler = (e: any) => { e.preventDefault(); setDeferredPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (isIOS) {
+      alert('Para instalar en iPhone: toca el ícono de Compartir (□↑) en la barra de Safari y selecciona "Agregar a pantalla de inicio".');
+      return;
+    }
+    if (!deferredPrompt) { alert('Ya está instalada o tu navegador no lo permite en este momento.'); return; }
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+  };
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -485,7 +506,7 @@ export default function Home() {
       </main>
 
       <button onClick={openNew} style={{
-        position: 'fixed', bottom: 78, right: 'calc(50% - 230px + 16px)', width: 54, height: 54, borderRadius: '50%',
+        position: 'fixed', bottom: 78, right: 'max(16px, calc(50% - 230px + 16px))', width: 54, height: 54, borderRadius: '50%',
         background: 'linear-gradient(160deg, var(--gold), var(--gold-deep))', color: '#fff', fontSize: 26, border: 'none',
         boxShadow: '0 10px 24px rgba(184,147,90,.5)', cursor: 'pointer', zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>+</button>
@@ -657,19 +678,19 @@ export default function Home() {
       {/* Smart App Banner */}
       <div style={{ background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', borderBottom: '1px solid var(--line)', padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/logomax.jpg" alt="Max Ventas" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--line)' }} />
+          <img src="/logomax.png" alt="Max Ventas" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--line)' }} />
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}>App de Inventario</div>
             <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>Instala para mejor experiencia</div>
           </div>
         </div>
-        <button style={{ background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-          Instalar
+        <button onClick={handleInstallClick} style={{ background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          {isIOS ? 'Cómo instalar' : 'Instalar'}
         </button>
       </div>
 
       {/* Page Content */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {tab === 'inventario' && renderInventory()}
         {tab === 'vender' && renderSales()}
         {tab === 'metricas' && renderMetrics()}
