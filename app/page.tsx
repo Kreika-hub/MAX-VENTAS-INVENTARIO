@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import Chart from 'chart.js/auto';
 
 type Mode = 'global' | 'multiple';
 
@@ -27,6 +30,15 @@ interface Product {
   material_mode: Mode; material_global: string; material_values: string[];
   images: string[];
   variants: Variant[];
+  created_at?: string;
+}
+
+interface Client {
+  id: string;
+  alias: string;
+  phone: string;
+  country_code: string;
+  created_at?: string;
 }
 
 interface Client {
@@ -199,6 +211,7 @@ export default function Home() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [cardCompact, setCardCompact] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [toast, setToast] = useState('');
@@ -219,6 +232,14 @@ export default function Home() {
   const [newPhone, setNewPhone] = useState('');
   const [newCountry, setNewCountry] = useState('+58');
   const [newCountryCustom, setNewCountryCustom] = useState('');
+  const [reportRange, setReportRange] = useState<'week' | 'month' | '3months' | 'all'>('month');
+  const [reportChannel, setReportChannel] = useState('all');
+  const [reportShowMargin, setReportShowMargin] = useState(true);
+  const [reportShowChart, setReportShowChart] = useState(true);
+  const [reportShowTopBottom, setReportShowTopBottom] = useState(true);
+  const [excelPreviewOpen, setExcelPreviewOpen] = useState(false);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const chartCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && sessionStorage.getItem('inv_pin_ok') === '1') setUnlocked(true);
@@ -271,23 +292,31 @@ export default function Home() {
   };
 
   const compressImage = (file: File): Promise<Blob> => new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) { reject(new Error('El archivo no es una imagen')); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        const maxDim = 1000;
-        let { width, height } = img;
-        if (width > height && width > maxDim) { height *= maxDim / width; width = maxDim; }
-        else if (height > maxDim) { width *= maxDim / height; height = maxDim; }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/jpeg', 0.75);
+        try {
+          const maxDim = 1000;
+          let { width, height } = img;
+          if (!width || !height) { resolve(file); return; }
+          if (width > height && width > maxDim) { height *= maxDim / width; width = maxDim; }
+          else if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { resolve(file); return; }
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(b => b ? resolve(b) : resolve(file), 'image/jpeg', 0.75);
+        } catch { resolve(file); }
       };
-      img.onerror = reject;
+      // Si el navegador no puede decodificar la imagen (ej. formato HEIC no soportado),
+      // subimos el archivo original en vez de fallar por completo.
+      img.onerror = () => resolve(file);
       img.src = e.target!.result as string;
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
     reader.readAsDataURL(file);
   });
 
@@ -317,10 +346,49 @@ export default function Home() {
     } catch { showToast('Error procesando foto'); }
   };
 
-  const confirmPendingPhoto = async () => {
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropPos, setCropPos] = useState({ x: 0, y: 0 });
+  const [cropImgSize, setCropImgSize] = useState({ w: 0, h: 0 });
+  const dragRef = useState({ dragging: false, startX: 0, startY: 0, startPos: { x: 0, y: 0 } })[0];
+
+  const confirmPendingPhoto = () => {
     const item = pendingFiles[pendingIndex];
+    if (!item) return;
+    setCropZoom(1); setCropPos({ x: 0, y: 0 });
+    setCropSrc(item.url);
+  };
+
+  const finishCrop = async () => {
+    const item = pendingFiles[pendingIndex];
+    if (!item || !cropSrc) return;
     showToast('Subiendo foto...');
-    if (item) await uploadOnePhoto(item.file);
+    try {
+      const frame = 280;
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = cropSrc; });
+      const scale = Math.max(frame / img.width, frame / img.height) * cropZoom;
+      const drawW = img.width * scale, drawH = img.height * scale;
+      const canvas = document.createElement('canvas');
+      canvas.width = 800; canvas.height = 800;
+      const ctx = canvas.getContext('2d')!;
+      const outScale = 800 / frame;
+      const dx = (frame - drawW) / 2 + cropPos.x;
+      const dy = (frame - drawH) / 2 + cropPos.y;
+      ctx.drawImage(img, dx * outScale, dy * outScale, drawW * outScale, drawH * outScale);
+      const blob: Blob = await new Promise(res => canvas.toBlob(b => res(b || new Blob()), 'image/jpeg', 0.8));
+      const slug = slugify(editing?.title || 'producto');
+      const path = `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+      const { error } = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
+      if (error) { showToast('Error subiendo foto: ' + error.message); }
+      else {
+        const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+        setEditing(prev => prev ? { ...prev, images: [...prev.images, data.publicUrl] } : prev);
+      }
+    } catch (e: any) {
+      showToast('Error procesando foto' + (e?.message ? ': ' + e.message : ''));
+    }
+    setCropSrc(null);
     const next = pendingIndex + 1;
     if (next < pendingFiles.length) setPendingIndex(next);
     else { setPendingFiles([]); setPendingIndex(0); }
@@ -377,9 +445,19 @@ export default function Home() {
     loadData();
   };
 
+  const [confirmModal, setConfirmModal] = useState<{ message: string; onConfirm: () => void } | null>(null);
+
   const deleteProduct = async () => {
     if (!editing?.id) return;
-    if (!confirm('¿Eliminar este producto del inventario?')) return;
+    setConfirmModal({
+      message: '¿Eliminar este producto del inventario?',
+      onConfirm: () => performDeleteProduct(),
+    });
+  };
+
+  const performDeleteProduct = async () => {
+    setConfirmModal(null);
+    if (!editing?.id) return;
     await supabase.from('product_variants').delete().eq('product_id', editing.id);
     await supabase.from('products').delete().eq('id', editing.id);
     showToast('Producto eliminado');
@@ -387,8 +465,7 @@ export default function Home() {
     loadData();
   };
 
-  const exportExcel = () => {
-    if (!products.length) { showToast('Agrega productos primero'); return; }
+  const buildExcelRows = () => {
     const rows: any[] = [];
     products.forEach(p => {
       const handle = slugify(p.title);
@@ -412,10 +489,21 @@ export default function Home() {
         });
       });
     });
+    return rows;
+  };
+
+  const exportExcel = () => {
+    if (!products.length) { showToast('Agrega productos primero'); return; }
+    setExcelPreviewOpen(true);
+  };
+
+  const downloadExcelFile = () => {
+    const rows = buildExcelRows();
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
     XLSX.writeFile(wb, 'inventario.xlsx');
+    setExcelPreviewOpen(false);
   };
 
   const downloadAllImages = async () => {
@@ -441,6 +529,154 @@ export default function Home() {
     showToast('ZIP descargado ✓');
   };
 
+  const buildReportData = () => {
+    const now = new Date();
+    let rangeStart: Date | null = null;
+    if (reportRange !== 'all') {
+      rangeStart = new Date(now);
+      if (reportRange === 'week') rangeStart.setDate(rangeStart.getDate() - 7);
+      else if (reportRange === 'month') rangeStart.setDate(rangeStart.getDate() - 30);
+      else if (reportRange === '3months') rangeStart.setDate(rangeStart.getDate() - 90);
+    }
+    const filtered = sales.filter(s => {
+      if (s.status !== 'Vendido') return false;
+      if (rangeStart && new Date(s.created_at) < rangeStart) return false;
+      if (reportChannel !== 'all' && s.channel !== reportChannel) return false;
+      return true;
+    });
+    const netSales = filtered.reduce((a, s) => a + Number(s.total_price), 0);
+    const totalCost = filtered.reduce((a, s) => a + Number(s.total_cost), 0);
+    const margin = netSales - totalCost;
+    const marginPct = netSales > 0 ? (margin / netSales) * 100 : 0;
+
+    // Filas de detalle: producto, fecha de ingreso, stock restante, canal y fecha de venta
+    const detailRows = filtered.map(s => {
+      const p = products.find(x => x.id === s.product_id);
+      const v = p?.variants.find(x => x.id === s.variant_id);
+      return {
+        producto: p?.title || '—',
+        variante: v ? ([v.talla, v.color, v.material].filter(Boolean).join(' / ') || 'Único') : '—',
+        ingreso: p?.created_at ? new Date(p.created_at).toLocaleDateString('es-VE') : '—',
+        stockRestante: v ? v.stock : 0,
+        canal: s.channel,
+        fechaVenta: new Date(s.created_at).toLocaleDateString('es-VE'),
+        cantidad: s.quantity,
+        total: Number(s.total_price),
+      };
+    });
+
+    // Progresión en el tiempo por canal (agrupado por semana)
+    const byWeek: Record<string, Record<string, number>> = {};
+    filtered.forEach(s => {
+      const d = new Date(s.created_at);
+      const weekKey = `${d.getFullYear()}-S${Math.ceil((d.getDate()) / 7)}-${d.getMonth() + 1}`;
+      byWeek[weekKey] = byWeek[weekKey] || {};
+      byWeek[weekKey][s.channel] = (byWeek[weekKey][s.channel] || 0) + Number(s.total_price);
+    });
+    const weekLabels = Object.keys(byWeek).sort();
+    const channels = ['Shopify', 'Instagram', 'WhatsApp', 'Persona'];
+
+    // Top y bottom productos por unidades vendidas
+    const qtyByProduct: Record<string, number> = {};
+    filtered.forEach(s => { qtyByProduct[s.product_id] = (qtyByProduct[s.product_id] || 0) + s.quantity; });
+    const ranked = Object.entries(qtyByProduct)
+      .map(([pid, qty]) => ({ title: products.find(p => p.id === pid)?.title || '—', qty }))
+      .sort((a, b) => b.qty - a.qty);
+    const top5 = ranked.slice(0, 5);
+    const bottom5 = ranked.slice(-5).reverse();
+
+    return { filtered, netSales, totalCost, margin, marginPct, detailRows, weekLabels, channels, byWeek, top5, bottom5 };
+  };
+
+  const generatePDF = async () => {
+    if (!products.length && !sales.length) { showToast('No hay datos para el reporte'); return; }
+    setPdfGenerating(true);
+    try {
+      const report = buildReportData();
+      const doc = new jsPDF();
+      const gold = [184, 147, 90];
+
+      // Encabezado
+      doc.setFillColor(184, 147, 90);
+      doc.rect(0, 0, 210, 22, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.text('Reporte de Inventario y Ventas', 14, 14);
+      doc.setFontSize(9);
+      const rangeLabel = { week: 'Última semana', month: 'Último mes', '3months': 'Últimos 3 meses', all: 'Histórico completo' }[reportRange];
+      doc.text(`${rangeLabel} · Canal: ${reportChannel === 'all' ? 'Todos' : reportChannel} · ${new Date().toLocaleDateString('es-VE')}`, 14, 20);
+
+      let y = 30;
+      doc.setTextColor(40, 36, 28);
+      doc.setFontSize(11);
+      doc.text(`Ventas netas: $${report.netSales.toFixed(2)}`, 14, y);
+      if (reportShowMargin) {
+        doc.text(`Margen de ganancia: $${report.margin.toFixed(2)} (${report.marginPct.toFixed(1)}%)`, 14, y + 6);
+        y += 6;
+      }
+      y += 12;
+
+      // Gráfico de progresión (todas las líneas por canal en un solo gráfico)
+      if (reportShowChart && report.weekLabels.length > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 900; canvas.height = 420;
+        const colors: Record<string, string> = { Shopify: '#95BF47', Instagram: '#C13584', WhatsApp: '#25D366', Persona: '#b8935a' };
+        const chart = new Chart(canvas, {
+          type: 'line',
+          data: {
+            labels: report.weekLabels,
+            datasets: report.channels.map(ch => ({
+              label: ch,
+              data: report.weekLabels.map(w => report.byWeek[w]?.[ch] || 0),
+              borderColor: colors[ch], backgroundColor: colors[ch], tension: 0.3, fill: false,
+            })),
+          },
+          options: { responsive: false, animation: false, plugins: { legend: { position: 'bottom' } } },
+        });
+        await new Promise(r => setTimeout(r, 250));
+        const imgData = canvas.toDataURL('image/png');
+        chart.destroy();
+        doc.text('Progresión de ventas por canal', 14, y);
+        doc.addImage(imgData, 'PNG', 14, y + 4, 182, 85);
+        y += 95;
+      }
+
+      // Top / bottom vendidos
+      if (reportShowTopBottom && report.top5.length > 0) {
+        if (y > 250) { doc.addPage(); y = 20; }
+        autoTable(doc, {
+          startY: y,
+          head: [['Más vendidos', 'Uds.']],
+          body: report.top5.map(t => [t.title, String(t.qty)]),
+          theme: 'plain', styles: { fontSize: 9 }, headStyles: { fillColor: gold as any },
+          margin: { left: 14 }, tableWidth: 88,
+        });
+        autoTable(doc, {
+          startY: y,
+          head: [['Menos vendidos', 'Uds.']],
+          body: report.bottom5.map(t => [t.title, String(t.qty)]),
+          theme: 'plain', styles: { fontSize: 9 }, headStyles: { fillColor: [181, 87, 63] as any },
+          margin: { left: 110 }, tableWidth: 88,
+        });
+        y = (doc as any).lastAutoTable.finalY + 12;
+      }
+
+      // Detalle de movimientos
+      if (y > 260) { doc.addPage(); y = 20; }
+      autoTable(doc, {
+        startY: y,
+        head: [['Producto', 'Variante', 'Ingreso', 'Stock actual', 'Canal', 'Fecha venta', 'Cant.', 'Total']],
+        body: report.detailRows.map(r => [r.producto, r.variante, r.ingreso, String(r.stockRestante), r.canal, r.fechaVenta, String(r.cantidad), `$${r.total.toFixed(2)}`]),
+        styles: { fontSize: 8 }, headStyles: { fillColor: gold as any },
+      });
+
+      doc.save('reporte-inventario.pdf');
+      showToast('PDF descargado ✓');
+    } catch (e: any) {
+      showToast('Error generando PDF: ' + (e?.message || ''));
+    }
+    setPdfGenerating(false);
+  };
   const handleSale = async () => {
     if (!posProduct || !posVariant) { showToast('Selecciona producto y variante'); return; }
     const p = products.find(x => x.id === posProduct);
@@ -501,13 +737,19 @@ export default function Home() {
     <>
       <header style={{ padding: '22px 20px 14px', position: 'sticky', top: 0, background: 'rgba(255,255,255,.95)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', zIndex: 20, borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
-          <img src="/Logotipo.jpg" style={{ height: 40, objectFit: 'contain', mixBlendMode: 'multiply' }} alt="Logotipo" />
+          <img src="/Logotipo.jpg" style={{ height: 72, objectFit: 'contain', mixBlendMode: 'multiply' }} alt="Logotipo" />
         </div>
         <h1 style={{ fontSize: 26, fontWeight: 700, margin: '0 0 4px', letterSpacing: '-0.02em', textAlign: 'center' }}>Inventario</h1>
         <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 14, textAlign: 'center' }}>
           {loading ? 'Cargando…' : `${products.length} producto${products.length === 1 ? '' : 's'} · ${products.reduce((a, p) => a + totalStock(p), 0)} unidades`}
         </div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto…" style={{ ...inputStyle, textAlign: 'center' }} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto…" style={{ ...inputStyle, textAlign: 'center', flex: 1 }} />
+          <button onClick={() => setCardCompact(!cardCompact)} title="Cambiar tamaño de tarjetas"
+            style={{ width: 42, height: 42, borderRadius: 12, border: '1px solid var(--line)', background: cardCompact ? 'var(--gold)' : '#fff', color: cardCompact ? '#fff' : 'var(--ink-soft)', flexShrink: 0, fontSize: 16, cursor: 'pointer' }}>
+            {cardCompact ? '▦' : '▤'}
+          </button>
+        </div>
       </header>
 
       <main style={{ padding: '16px 16px 100px' }}>
@@ -534,19 +776,37 @@ export default function Home() {
             const shopify = totalShopify(p);
             const isLow = stock > 0 && stock <= 3;
             const isOut = stock === 0;
+            const minPrice = p.variants.length ? Math.min(...p.variants.map(v => v.precio || 0)) : 0;
+            const colorList = p.color_mode === 'multiple' ? p.color_values.filter(Boolean) : (p.color_global ? [p.color_global] : []);
+            const imgH = cardCompact ? 90 : 150;
             return (
-              <div key={p.id} onClick={() => openExisting(p)} style={{ background: '#fff', border: `1px solid ${isOut ? 'var(--danger)' : isLow ? 'var(--gold)' : 'var(--line)'}`, borderRadius: 14, overflow: 'hidden', cursor: 'pointer', display: 'flex', gap: 0 }}>
-                <div style={{ width: 90, minHeight: 90, background: 'var(--nude-soft)', flexShrink: 0 }}>
-                  {p.images[0] ? <img src={p.images[0]} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} alt={p.title} /> : <div style={{ width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📷</div>}
+              <div key={p.id} style={{ background: '#fff', border: `1px solid ${isOut ? 'var(--danger)' : isLow ? 'var(--gold)' : 'var(--line)'}`, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: cardCompact ? 168 : 268 }}>
+                <div onClick={() => openExisting(p)} style={{ width: '100%', height: imgH, background: 'var(--nude-soft)', flexShrink: 0, cursor: 'pointer' }}>
+                  {p.images[0] ? <img src={p.images[0]} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} alt={p.title} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📷</div>}
                 </div>
-                <div style={{ padding: '10px 14px', flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, lineHeight: 1.2 }}>{p.title}</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
-                    <span style={{ color: isOut ? 'var(--danger)' : isLow ? '#e07a00' : 'var(--ink-soft)', fontWeight: isLow || isOut ? 700 : 400 }}>
-                      {isOut ? '❌ Sin stock' : isLow ? `🚨 Stock: ${stock}` : `📦 Stock: ${stock}`}
+                <div onClick={() => openExisting(p)} style={{ padding: cardCompact ? '6px 10px 2px' : '10px 12px 4px', flex: 1, cursor: 'pointer', overflow: 'hidden' }}>
+                  <div style={{ fontSize: cardCompact ? 12 : 13.5, fontWeight: 700, marginBottom: 3, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</div>
+                  {!cardCompact && <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold-deep)', marginBottom: 4 }}>${minPrice.toFixed(2)}</div>}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 10.5, marginBottom: 4 }}>
+                    <span style={{ color: isOut ? 'var(--danger)' : isLow ? '#e07a00' : 'var(--ink-soft)', fontWeight: isLow || isOut ? 700 : 500 }}>
+                      {isOut ? '❌ 0' : `📦 ${stock}`}
                     </span>
-                    <span style={{ color: 'var(--ink-soft)' }}>🛒 Shopify: {shopify}</span>
+                    {!cardCompact && <span style={{ color: 'var(--ink-soft)' }}>🛒 {shopify}</span>}
                   </div>
+                  {!cardCompact && colorList.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {colorList.slice(0, 3).map((c, i) => (
+                        <span key={i} style={{ fontSize: 9.5, background: 'var(--nude-soft)', color: 'var(--ink-soft)', padding: '2px 6px', borderRadius: 20 }}>{c}</span>
+                      ))}
+                      {colorList.length > 3 && <span style={{ fontSize: 9.5, color: 'var(--ink-soft)' }}>+{colorList.length - 3}</span>}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', borderTop: '1px solid var(--line)', flexShrink: 0 }}>
+                  <button onClick={() => openExisting(p)} style={{ flex: 1, border: 'none', background: '#fff', color: 'var(--ink)', fontWeight: 700, fontSize: 11.5, padding: cardCompact ? 6 : 9, cursor: 'pointer' }}>✏️ Editar</button>
+                  <div style={{ width: 1, background: 'var(--line)' }} />
+                  <button onClick={() => setConfirmModal({ message: `¿Eliminar "${p.title}"?`, onConfirm: async () => { setConfirmModal(null); await supabase.from('product_variants').delete().eq('product_id', p.id); await supabase.from('products').delete().eq('id', p.id); showToast('Producto eliminado'); loadData(); } })}
+                    style={{ flex: 1, border: 'none', background: '#fff', color: 'var(--danger)', fontWeight: 700, fontSize: 11.5, padding: cardCompact ? 6 : 9, cursor: 'pointer' }}>🗑️ Eliminar</button>
                 </div>
               </div>
             );
@@ -713,6 +973,16 @@ export default function Home() {
   };
 
   const renderMetrics = () => {
+    const now = new Date();
+    const rangeStart = (() => {
+      const d = new Date(now);
+      if (reportRange === 'week') d.setDate(d.getDate() - 7);
+      else if (reportRange === 'month') d.setDate(d.getDate() - 30);
+      else if (reportRange === '3months') d.setDate(d.getDate() - 90);
+      else return null;
+      return d;
+    })();
+
     const sold = sales.filter(s => s.status === 'Vendido');
     const reserved = sales.filter(s => s.status === 'Apartado');
     const totalRev = sold.reduce((a, b) => a + Number(b.total_price), 0);
@@ -742,6 +1012,47 @@ export default function Home() {
                 <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{c.sub}</div>
               </div>
             ))}
+          </div>
+
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Reporte</div>
+          <div style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 14, padding: 14, marginBottom: 20 }}>
+            <label style={{ ...labelStyle, margin: '0 0 6px' }}>Periodo</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+              {[
+                { id: 'week', label: 'Última semana' },
+                { id: 'month', label: 'Último mes' },
+                { id: '3months', label: 'Últimos 3 meses' },
+                { id: 'all', label: 'Todo (histórico)' },
+              ].map(o => (
+                <button key={o.id} onClick={() => setReportRange(o.id as any)}
+                  style={{ padding: '9px 8px', borderRadius: 10, border: `2px solid ${reportRange === o.id ? 'var(--gold)' : 'var(--line)'}`, background: reportRange === o.id ? 'var(--nude-soft)' : '#fff', color: reportRange === o.id ? 'var(--gold-deep)' : 'var(--ink-soft)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <label style={{ ...labelStyle, margin: '0 0 6px' }}>Canal de venta</label>
+            <select value={reportChannel} onChange={e => setReportChannel(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+              <option value="all">Todos los canales</option>
+              <option value="Shopify">Shopify</option>
+              <option value="Instagram">Instagram</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Persona">Persona</option>
+            </select>
+            <label style={{ ...labelStyle, margin: '0 0 6px' }}>Incluir en el PDF</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={reportShowMargin} onChange={e => setReportShowMargin(e.target.checked)} /> Margen de ganancia
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={reportShowChart} onChange={e => setReportShowChart(e.target.checked)} /> Gráfico de progresión por canal
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={reportShowTopBottom} onChange={e => setReportShowTopBottom(e.target.checked)} /> Más y menos vendidos
+              </label>
+            </div>
+            <button onClick={generatePDF} disabled={pdfGenerating} style={{ width: '100%', padding: 13, borderRadius: 12, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+              {pdfGenerating ? 'Generando PDF…' : '📄 Descargar reporte en PDF'}
+            </button>
           </div>
 
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Por Canal</div>
@@ -811,6 +1122,59 @@ export default function Home() {
         {tab === 'metricas' && renderMetrics()}
       </div>
 
+      {confirmModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.6)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: '#fff', width: '100%', maxWidth: 340, borderRadius: 18, padding: 22, textAlign: 'center' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 20 }}>{confirmModal.message}</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmModal(null)} style={{ flex: 1, padding: 12, borderRadius: 12, border: '1px solid var(--line)', background: '#fff', color: 'var(--ink)', fontWeight: 700 }}>Cancelar</button>
+              <button onClick={() => confirmModal.onConfirm()} style={{ flex: 1, padding: 12, borderRadius: 12, border: 'none', background: 'var(--danger)', color: '#fff', fontWeight: 700 }}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {excelPreviewOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.6)', zIndex: 300, display: 'flex', alignItems: 'flex-end' }}>
+          <div style={{ background: '#fff', width: '100%', maxWidth: 460, margin: '0 auto', borderRadius: '20px 20px 0 0', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Vista previa del Excel</h3>
+              <button onClick={() => setExcelPreviewOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--ink-soft)', fontSize: 20, cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ overflow: 'auto', padding: 12 }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+                <thead>
+                  <tr>
+                    {Object.keys(buildExcelRows()[0] || {}).map(k => (
+                      <th key={k} style={{ border: '1px solid var(--line)', padding: '5px 8px', background: 'var(--nude-soft)', textAlign: 'left', whiteSpace: 'nowrap' }}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {buildExcelRows().slice(0, 30).map((row, i) => (
+                    <tr key={i}>
+                      {Object.values(row).map((v, j) => (
+                        <td key={j} style={{ border: '1px solid var(--line)', padding: '5px 8px', whiteSpace: 'nowrap' }}>{String(v)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {buildExcelRows().length > 30 && (
+                <p style={{ fontSize: 11, color: 'var(--ink-soft)', textAlign: 'center', margin: '8px 0' }}>
+                  Mostrando 30 de {buildExcelRows().length} filas — el archivo descargado tendrá todas.
+                </p>
+              )}
+            </div>
+            <div style={{ padding: 16, borderTop: '1px solid var(--line)' }}>
+              <button onClick={downloadExcelFile} style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
+                Descargar Excel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Product Editor Modal */}
       {editorOpen && editing && (
         <div style={{ position: 'fixed', inset: 0, background: '#fff', zIndex: 100, display: 'flex', flexDirection: 'column', maxWidth: 460, margin: '0 auto' }}>
@@ -845,7 +1209,7 @@ export default function Home() {
               )}
             </div>
 
-            {pendingFiles.length > 0 && pendingFiles[pendingIndex] && (
+            {pendingFiles.length > 0 && pendingFiles[pendingIndex] && !cropSrc && (
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.92)', zIndex: 300, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, maxWidth: 460, margin: '0 auto' }}>
                 <div style={{ color: '#fff', fontSize: 13, marginBottom: 12, opacity: 0.8 }}>
                   Foto {pendingIndex + 1} de {pendingFiles.length}
@@ -856,6 +1220,40 @@ export default function Home() {
                     Descartar
                   </button>
                   <button onClick={confirmPendingPhoto} style={{ flex: 1, padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
+                    Continuar y recortar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {cropSrc && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.94)', zIndex: 310, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, maxWidth: 460, margin: '0 auto' }}>
+                <div style={{ color: '#fff', fontSize: 13, marginBottom: 12, opacity: 0.8 }}>Ajusta el recorte</div>
+                <div
+                  style={{ width: 280, height: 280, borderRadius: 20, overflow: 'hidden', position: 'relative', background: '#111', touchAction: 'none', border: '2px solid var(--gold)' }}
+                  onPointerDown={e => { (e.target as any).setPointerCapture(e.pointerId); dragRef.dragging = true; dragRef.startX = e.clientX; dragRef.startY = e.clientY; dragRef.startPos = { ...cropPos }; }}
+                  onPointerMove={e => {
+                    if (!dragRef.dragging) return;
+                    setCropPos({ x: dragRef.startPos.x + (e.clientX - dragRef.startX), y: dragRef.startPos.y + (e.clientY - dragRef.startY) });
+                  }}
+                  onPointerUp={() => { dragRef.dragging = false; }}
+                >
+                  <img src={cropSrc} draggable={false}
+                    style={{
+                      position: 'absolute', top: '50%', left: '50%',
+                      transform: `translate(-50%,-50%) translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})`,
+                      maxWidth: 'none', width: 280, height: 'auto', userSelect: 'none',
+                    }} alt="Recortar" />
+                </div>
+                <div style={{ width: 280, marginTop: 16 }}>
+                  <input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={e => setCropZoom(Number(e.target.value))} style={{ width: '100%' }} />
+                  <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 11, textAlign: 'center', marginTop: 2 }}>Desliza para zoom · arrastra la foto para moverla</div>
+                </div>
+                <div style={{ display: 'flex', gap: 12, marginTop: 20, width: '100%' }}>
+                  <button onClick={() => setCropSrc(null)} style={{ flex: 1, padding: 14, borderRadius: 14, border: '1px solid rgba(255,255,255,.4)', background: 'transparent', color: '#fff', fontWeight: 700 }}>
+                    Atrás
+                  </button>
+                  <button onClick={finishCrop} style={{ flex: 1, padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
                     Usar esta foto
                   </button>
                 </div>
@@ -909,22 +1307,22 @@ export default function Home() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 10, color: 'var(--ink-soft)', fontWeight: 600, marginBottom: 4 }}>STOCK TOTAL</div>
-                      <input type="number" value={v.stock} onChange={e => {
-                        const vs = [...editing.variants]; vs[i] = { ...vs[i], stock: Number(e.target.value) };
+                      <input type="number" value={v.stock === 0 ? '' : v.stock} placeholder="0" onChange={e => {
+                        const vs = [...editing.variants]; vs[i] = { ...vs[i], stock: e.target.value === '' ? 0 : Number(e.target.value) };
                         setEditing({ ...editing, variants: vs });
                       }} style={{ ...inputStyle, padding: '10px 8px', fontSize: 13 }} />
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: 'var(--ink-soft)', fontWeight: 600, marginBottom: 4 }}>EN SHOPIFY</div>
-                      <input type="number" value={v.shopify_stock} onChange={e => {
-                        const vs = [...editing.variants]; vs[i] = { ...vs[i], shopify_stock: Number(e.target.value) };
+                      <input type="number" value={v.shopify_stock === 0 ? '' : v.shopify_stock} placeholder="0" onChange={e => {
+                        const vs = [...editing.variants]; vs[i] = { ...vs[i], shopify_stock: e.target.value === '' ? 0 : Number(e.target.value) };
                         setEditing({ ...editing, variants: vs });
                       }} style={{ ...inputStyle, padding: '10px 8px', fontSize: 13 }} />
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: 'var(--ink-soft)', fontWeight: 600, marginBottom: 4 }}>PRECIO VENTA</div>
-                      <input type="number" value={v.precio} onChange={e => {
-                        const vs = [...editing.variants]; vs[i] = { ...vs[i], precio: Number(e.target.value) };
+                      <input type="number" value={v.precio === 0 ? '' : v.precio} placeholder="0" onChange={e => {
+                        const vs = [...editing.variants]; vs[i] = { ...vs[i], precio: e.target.value === '' ? 0 : Number(e.target.value) };
                         setEditing({ ...editing, variants: vs });
                       }} style={{ ...inputStyle, padding: '10px 8px', fontSize: 13 }} />
                     </div>
