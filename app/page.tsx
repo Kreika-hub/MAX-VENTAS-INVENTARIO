@@ -465,9 +465,87 @@ export default function Home() {
     return rows;
   };
 
+  const buildCSVRows = () => {
+    const rows: any[] = [];
+    products.forEach(p => {
+      const handle = slugify(p.title);
+      p.variants.forEach((v, i) => {
+        const isFirst = i === 0;
+        rows.push({
+          'Title': isFirst ? p.title : '',
+          'URL handle': handle,
+          'Description': isFirst ? p.title : '',
+          'Vendor': 'Kreika',
+          'Product category': 'Apparel & Accessories > Clothing',
+          'Type': 'Clothing',
+          'Tags': '',
+          'Published on online store': 'TRUE',
+          'Status': 'active',
+          'SKU': v.sku,
+          'Barcode': '',
+          'Option1 name': p.talla_mode === 'multiple' ? 'Size' : (p.talla_global ? 'Size' : ''),
+          'Option1 value': v.talla || '',
+          'Option1 Linked To': '',
+          'Option2 name': p.color_mode === 'multiple' ? 'Color' : (p.color_global ? 'Color' : ''),
+          'Option2 value': v.color || '',
+          'Option2 Linked To': '',
+          'Option3 name': p.material_mode === 'multiple' ? 'Material' : (p.material_global ? 'Material' : ''),
+          'Option3 value': v.material || '',
+          'Option3 Linked To': '',
+          'Price': v.precio,
+          'Compare-at price': '',
+          'Cost per item': p.cost,
+          'Charge tax': 'TRUE',
+          'Tax code': '',
+          'Unit price total measure': '',
+          'Unit price total measure unit': '',
+          'Unit price base measure': '',
+          'Unit price base measure unit': '',
+          'Inventory tracker': 'shopify',
+          'Inventory quantity': v.shopify_stock ?? v.stock ?? 0,
+          'Continue selling when out of stock': 'DENY',
+          'Weight value (grams)': '200',
+          'Weight unit for display': 'g',
+          'Requires shipping': 'TRUE',
+          'Fulfillment service': 'manual',
+          'Product image URL': isFirst ? (p.images[0] || '') : '',
+          'Image position': isFirst && p.images[0] ? '1' : '',
+          'Image alt text': isFirst ? p.title : '',
+          'Variant image URL': p.images[0] || '',
+          'Gift card': 'FALSE',
+          'SEO title': '',
+          'SEO description': '',
+          'Color (product.metafields.shopify.color-pattern)': v.color || '',
+          'Google Shopping / Google product category': '',
+          'Google Shopping / Gender': '',
+          'Google Shopping / Age group': '',
+          'Google Shopping / Manufacturer part number (MPN)': '',
+          'Google Shopping / Ad group name': '',
+          'Google Shopping / Ads labels': '',
+          'Google Shopping / Condition': 'New',
+          'Google Shopping / Custom product': 'FALSE',
+          'Google Shopping / Custom label 0': '',
+          'Google Shopping / Custom label 1': '',
+          'Google Shopping / Custom label 2': '',
+          'Google Shopping / Custom label 3': '',
+          'Google Shopping / Custom label 4': '',
+        });
+      });
+    });
+    return rows;
+  };
+
   const exportExcel = () => {
     if (!products.length) { showToast('Agrega productos primero'); return; }
     setExcelPreviewOpen(true);
+  };
+
+  const getDateStr = () => {
+    const now = new Date();
+    const day = now.getDate();
+    const month = now.getMonth() + 1;
+    const year = String(now.getFullYear()).slice(-2);
+    return `${day}-${month}-${year}`;
   };
 
   const downloadExcelFile = () => {
@@ -475,12 +553,22 @@ export default function Home() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-    const now = new Date();
-    const day = now.getDate();
-    const month = now.getMonth() + 1;
-    const year = String(now.getFullYear()).slice(-2);
-    const filename = `inventario al ${day}-${month}-${year}.xlsx`;
+    const filename = `inventario al ${getDateStr()}.xlsx`;
     XLSX.writeFile(wb, filename);
+    setExcelPreviewOpen(false);
+  };
+
+  const downloadCSVFile = () => {
+    const rows = buildCSVRows();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const csvOutput = XLSX.utils.sheet_to_csv(ws);
+    const blob = new Blob([csvOutput], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `product_template (1) al ${getDateStr()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
     setExcelPreviewOpen(false);
   };
 
@@ -1149,9 +1237,12 @@ export default function Home() {
                 </p>
               )}
             </div>
-            <div style={{ padding: 16, borderTop: '1px solid var(--line)' }}>
-              <button onClick={downloadExcelFile} style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
-                Descargar Excel
+            <div style={{ padding: 16, borderTop: '1px solid var(--line)', display: 'flex', gap: 10 }}>
+              <button onClick={downloadExcelFile} style={{ flex: 1, padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                📊 Descargar Excel
+              </button>
+              <button onClick={downloadCSVFile} style={{ flex: 1, padding: 14, borderRadius: 14, border: '1px solid var(--gold)', background: '#fff', color: 'var(--gold-deep)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                📄 Descargar CSV (Shopify)
               </button>
             </div>
           </div>
