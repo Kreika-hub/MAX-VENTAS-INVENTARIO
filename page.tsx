@@ -320,87 +320,36 @@ export default function Home() {
     reader.readAsDataURL(file);
   });
 
-  const [pendingFiles, setPendingFiles] = useState<{ file: File; url: string }[]>([]);
-  const [pendingIndex, setPendingIndex] = useState(0);
-
-  const startPreview = (files: FileList | null) => {
+  const handlePhotos = async (files: FileList | null) => {
     if (!files || !editing) return;
     const remainingSlots = 4 - editing.images.length;
     if (remainingSlots <= 0) { showToast('⚠️ Máximo 4 fotos por producto'); return; }
-    const arr = Array.from(files).slice(0, remainingSlots).map(f => ({ file: f, url: URL.createObjectURL(f) }));
-    if (arr.length === 0) return;
-    setPendingFiles(arr);
-    setPendingIndex(0);
-  };
+    const fileList = Array.from(files).slice(0, remainingSlots);
+    if (fileList.length === 0) return;
 
-  const uploadOnePhoto = async (file: File) => {
-    if (!editing) return;
-    const slug = slugify(editing.title || 'producto');
-    try {
-      const blob = await compressImage(file);
-      const path = `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
-      const { error } = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
-      if (error) { showToast('Error subiendo foto: ' + error.message); return; }
-      const { data } = supabase.storage.from('product-images').getPublicUrl(path);
-      updateEditing({ images: [...editing.images, data.publicUrl] });
-    } catch { showToast('Error procesando foto'); }
-  };
-
-  const [cropSrc, setCropSrc] = useState<string | null>(null);
-  const [cropZoom, setCropZoom] = useState(1);
-  const [cropPos, setCropPos] = useState({ x: 0, y: 0 });
-  const [cropImgSize, setCropImgSize] = useState({ w: 0, h: 0 });
-  const dragRef = useState({ dragging: false, startX: 0, startY: 0, startPos: { x: 0, y: 0 } })[0];
-
-  const confirmPendingPhoto = () => {
-    const item = pendingFiles[pendingIndex];
-    if (!item) return;
-    setCropZoom(1); setCropPos({ x: 0, y: 0 });
-    setCropSrc(item.url);
-  };
-
-  const finishCrop = async () => {
-    const item = pendingFiles[pendingIndex];
-    if (!item || !cropSrc) return;
     showToast('Subiendo foto...');
-    try {
-      const frame = 280;
-      const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = cropSrc; });
-      const scale = Math.max(frame / img.width, frame / img.height) * cropZoom;
-      const drawW = img.width * scale, drawH = img.height * scale;
-      const canvas = document.createElement('canvas');
-      canvas.width = 800; canvas.height = 800;
-      const ctx = canvas.getContext('2d')!;
-      const outScale = 800 / frame;
-      const dx = (frame - drawW) / 2 + cropPos.x;
-      const dy = (frame - drawH) / 2 + cropPos.y;
-      ctx.drawImage(img, dx * outScale, dy * outScale, drawW * outScale, drawH * outScale);
-      const blob: Blob = await new Promise(res => canvas.toBlob(b => res(b || new Blob()), 'image/jpeg', 0.8));
-      const slug = slugify(editing?.title || 'producto');
-      const path = `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
-      const { error } = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
-      if (error) { showToast('Error subiendo foto: ' + error.message); }
-      else {
-        const { data } = supabase.storage.from('product-images').getPublicUrl(path);
-        setEditing(prev => prev ? { ...prev, images: [...prev.images, data.publicUrl] } : prev);
+    const newUrls: string[] = [];
+    for (const file of fileList) {
+      try {
+        const slug = slugify(editing.title || 'producto');
+        const blob = await compressImage(file);
+        const path = `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+        const { error } = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
+        if (error) { showToast('Error subiendo foto: ' + error.message); }
+        else {
+          const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+          newUrls.push(data.publicUrl);
+        }
+      } catch (e: any) {
+        showToast('Error procesando foto' + (e?.message ? ': ' + e.message : ''));
       }
-    } catch (e: any) {
-      showToast('Error procesando foto' + (e?.message ? ': ' + e.message : ''));
     }
-    setCropSrc(null);
-    const next = pendingIndex + 1;
-    if (next < pendingFiles.length) setPendingIndex(next);
-    else { setPendingFiles([]); setPendingIndex(0); }
-  };
 
-  const cancelPendingPhoto = () => {
-    const next = pendingIndex + 1;
-    if (next < pendingFiles.length) setPendingIndex(next);
-    else { setPendingFiles([]); setPendingIndex(0); }
+    if (newUrls.length > 0) {
+      setEditing(prev => prev ? { ...prev, images: [...prev.images, ...newUrls] } : prev);
+      showToast('Fotos subidas ✓');
+    }
   };
-
-  const handlePhotos = (files: FileList | null) => startPreview(files);
 
   const removePhoto = (i: number) => {
     if (!editing) return;
@@ -515,9 +464,14 @@ export default function Home() {
       const folder = zip.folder(slug)!;
       for (let i = 0; i < p.images.length; i++) {
         try {
-          const res = await fetch(p.images[i]);
+          const imgUrl = p.images[i];
+          const res = await fetch(imgUrl);
           const blob = await res.blob();
-          folder.file(`${slug}-${i + 1}.jpg`, blob);
+          let ext = 'jpg';
+          if (blob.type.includes('png')) ext = 'png';
+          else if (blob.type.includes('webp')) ext = 'webp';
+          else if (blob.type.includes('jpeg') || blob.type.includes('jpg')) ext = 'jpg';
+          folder.file(`${slug}-${i + 1}.${ext}`, blob);
         } catch { /* skip failed image */ }
       }
     }
@@ -1208,57 +1162,6 @@ export default function Home() {
                 </>
               )}
             </div>
-
-            {pendingFiles.length > 0 && pendingFiles[pendingIndex] && !cropSrc && (
-              <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.92)', zIndex: 300, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, maxWidth: 460, margin: '0 auto' }}>
-                <div style={{ color: '#fff', fontSize: 13, marginBottom: 12, opacity: 0.8 }}>
-                  Foto {pendingIndex + 1} de {pendingFiles.length}
-                </div>
-                <img src={pendingFiles[pendingIndex].url} style={{ maxWidth: '100%', maxHeight: '65vh', borderRadius: 16, objectFit: 'contain' }} alt="Vista previa" />
-                <div style={{ display: 'flex', gap: 12, marginTop: 22, width: '100%' }}>
-                  <button onClick={cancelPendingPhoto} style={{ flex: 1, padding: 14, borderRadius: 14, border: '1px solid rgba(255,255,255,.4)', background: 'transparent', color: '#fff', fontWeight: 700 }}>
-                    Descartar
-                  </button>
-                  <button onClick={confirmPendingPhoto} style={{ flex: 1, padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
-                    Continuar y recortar
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {cropSrc && (
-              <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,10,0.94)', zIndex: 310, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, maxWidth: 460, margin: '0 auto' }}>
-                <div style={{ color: '#fff', fontSize: 13, marginBottom: 12, opacity: 0.8 }}>Ajusta el recorte</div>
-                <div
-                  style={{ width: 280, height: 280, borderRadius: 20, overflow: 'hidden', position: 'relative', background: '#111', touchAction: 'none', border: '2px solid var(--gold)' }}
-                  onPointerDown={e => { (e.target as any).setPointerCapture(e.pointerId); dragRef.dragging = true; dragRef.startX = e.clientX; dragRef.startY = e.clientY; dragRef.startPos = { ...cropPos }; }}
-                  onPointerMove={e => {
-                    if (!dragRef.dragging) return;
-                    setCropPos({ x: dragRef.startPos.x + (e.clientX - dragRef.startX), y: dragRef.startPos.y + (e.clientY - dragRef.startY) });
-                  }}
-                  onPointerUp={() => { dragRef.dragging = false; }}
-                >
-                  <img src={cropSrc} draggable={false}
-                    style={{
-                      position: 'absolute', top: '50%', left: '50%',
-                      transform: `translate(-50%,-50%) translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})`,
-                      maxWidth: 'none', width: 280, height: 'auto', userSelect: 'none',
-                    }} alt="Recortar" />
-                </div>
-                <div style={{ width: 280, marginTop: 16 }}>
-                  <input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={e => setCropZoom(Number(e.target.value))} style={{ width: '100%' }} />
-                  <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 11, textAlign: 'center', marginTop: 2 }}>Desliza para zoom · arrastra la foto para moverla</div>
-                </div>
-                <div style={{ display: 'flex', gap: 12, marginTop: 20, width: '100%' }}>
-                  <button onClick={() => setCropSrc(null)} style={{ flex: 1, padding: 14, borderRadius: 14, border: '1px solid rgba(255,255,255,.4)', background: 'transparent', color: '#fff', fontWeight: 700 }}>
-                    Atrás
-                  </button>
-                  <button onClick={finishCrop} style={{ flex: 1, padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(160deg,var(--gold),var(--gold-deep))', color: '#fff', fontWeight: 700 }}>
-                    Usar esta foto
-                  </button>
-                </div>
-              </div>
-            )}
 
             <label style={labelStyle}>Título del producto</label>
             <input value={editing.title} onChange={e => updateEditing({ title: e.target.value })} placeholder="Ej. Vestido Camila lino" style={inputStyle} />
