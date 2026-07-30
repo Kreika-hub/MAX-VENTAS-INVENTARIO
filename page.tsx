@@ -1154,7 +1154,7 @@ export default function Home() {
                 <>
                   <label style={{ width: 76, height: 76, borderRadius: 12, border: '1.5px dashed var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--gold-deep)', fontSize: 24, cursor: 'pointer', background: 'var(--nude-soft)', flexShrink: 0, flexDirection: 'column', gap: 2 }}>
                     <span style={{ fontSize: 22, lineHeight: 1 }}>📷</span>
-                    <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} />
+                    <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} />
                   </label>
                   <label style={{ width: 76, height: 76, borderRadius: 12, border: '1.5px dashed var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--gold-deep)', cursor: 'pointer', background: 'var(--nude-soft)', flexShrink: 0, flexDirection: 'column', gap: 2 }}>
                     <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>

@@ -421,21 +421,22 @@ export default function Home() {
       const handle = slugify(p.title);
       p.variants.forEach((v, i) => {
         rows.push({
-          Handle: handle, Title: i === 0 ? p.title : '',
-          'Option1 Name': p.talla_mode === 'multiple' ? 'Talla' : '',
-          'Option1 Value': p.talla_mode === 'multiple' ? v.talla : '',
-          'Option2 Name': p.color_mode === 'multiple' ? 'Color' : '',
-          'Option2 Value': p.color_mode === 'multiple' ? v.color : '',
-          'Option3 Name': p.material_mode === 'multiple' ? 'Material' : '',
-          'Option3 Value': p.material_mode === 'multiple' ? v.material : '',
-          'Variant SKU': v.sku,
+          'Handle': handle,
+          'Título': i === 0 ? p.title : '',
+          'Opción 1 (Talla)': p.talla_mode === 'multiple' ? 'Talla' : '',
+          'Valor Talla': v.talla,
+          'Opción 2 (Color)': p.color_mode === 'multiple' ? 'Color' : '',
+          'Valor Color': v.color,
+          'Opción 3 (Material)': p.material_mode === 'multiple' ? 'Material' : '',
+          'Valor Material': v.material,
+          'SKU': v.sku,
           'Stock General': v.stock,
           'Stock Shopify': v.shopify_stock,
-          'Precio Venta': v.precio,
-          'Costo': p.cost,
-          'Ganancia': v.precio - p.cost,
-          'Image Src': p.images[0] || '',
-          Status: 'active',
+          'Precio Venta ($)': v.precio,
+          'Costo ($)': p.cost,
+          'Ganancia ($)': v.precio - p.cost,
+          'Imagen URL': p.images[0] || '',
+          'Estado': 'Activo',
         });
       });
     });
@@ -452,7 +453,12 @@ export default function Home() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-    XLSX.writeFile(wb, 'inventario.xlsx');
+    const now = new Date();
+    const day = now.getDate();
+    const month = now.getMonth() + 1;
+    const year = String(now.getFullYear()).slice(-2);
+    const filename = `inventario al ${day}-${month}-${year}.xlsx`;
+    XLSX.writeFile(wb, filename);
     setExcelPreviewOpen(false);
   };
 
@@ -1154,7 +1160,7 @@ export default function Home() {
                 <>
                   <label style={{ width: 76, height: 76, borderRadius: 12, border: '1.5px dashed var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--gold-deep)', fontSize: 24, cursor: 'pointer', background: 'var(--nude-soft)', flexShrink: 0, flexDirection: 'column', gap: 2 }}>
                     <span style={{ fontSize: 22, lineHeight: 1 }}>📷</span>
-                    <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} />
+                    <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} />
                   </label>
                   <label style={{ width: 76, height: 76, borderRadius: 12, border: '1.5px dashed var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--gold-deep)', cursor: 'pointer', background: 'var(--nude-soft)', flexShrink: 0, flexDirection: 'column', gap: 2 }}>
                     <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
