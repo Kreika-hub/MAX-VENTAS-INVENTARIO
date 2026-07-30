@@ -215,6 +215,7 @@ export default function Home() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // POS state
   const [posProduct, setPosProduct] = useState('');
@@ -1144,9 +1145,9 @@ export default function Home() {
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {editing.images.map((src, i) => (
-                <div key={i} style={{ width: 76, height: 76, borderRadius: 12, overflow: 'hidden', position: 'relative', border: '1px solid var(--line)', flexShrink: 0 }}>
+                <div key={i} style={{ width: 76, height: 76, borderRadius: 12, overflow: 'hidden', position: 'relative', border: '1px solid var(--line)', flexShrink: 0, cursor: 'pointer' }} onClick={() => setPreviewImage(src)}>
                   <img src={src} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                  <div onClick={() => removePhoto(i)} style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22, borderRadius: '50%', background: 'rgba(43,36,28,.8)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, cursor: 'pointer' }}>✕</div>
+                  <div onClick={(e) => { e.stopPropagation(); removePhoto(i); }} style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22, borderRadius: '50%', background: 'rgba(43,36,28,.8)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, cursor: 'pointer' }}>✕</div>
                 </div>
               ))}
               {editing.images.length < 4 && (
@@ -1261,6 +1262,13 @@ export default function Home() {
           </button>
         ))}
       </nav>
+
+      {previewImage && (
+        <div onClick={() => setPreviewImage(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <img src={previewImage} style={{ maxWidth: '100%', maxHeight: '90vh', objectFit: 'contain', borderRadius: 12 }} alt="Vista previa" />
+          <button onClick={() => setPreviewImage(null)} style={{ position: 'absolute', top: 20, right: 20, background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', fontSize: 24, borderRadius: '50%', width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        </div>
+      )}
 
       {toast && (
         <div style={{ position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)', background: 'var(--ink)', color: '#fff', padding: '11px 22px', borderRadius: 30, fontSize: 13.5, zIndex: 200, whiteSpace: 'nowrap' }}>
