@@ -336,12 +336,15 @@ export default function Home() {
         const blob = await compressImage(file);
         const path = `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
         const { error } = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
-        if (error) { showToast('Error subiendo foto: ' + error.message); }
-        else {
+        if (error) {
+          console.error('Error subiendo foto:', error);
+          showToast('Error subiendo foto: ' + error.message);
+        } else {
           const { data } = supabase.storage.from('product-images').getPublicUrl(path);
           newUrls.push(data.publicUrl);
         }
       } catch (e: any) {
+        console.error('Error procesando foto:', e);
         showToast('Error procesando foto' + (e?.message ? ': ' + e.message : ''));
       }
     }
@@ -360,39 +363,58 @@ export default function Home() {
   const saveProduct = async () => {
     if (!editing) return;
     if (!editing.title.trim()) { showToast('Ponle un título al producto'); return; }
-    const payload = {
-      title: editing.title,
-      cost: editing.cost,
-      talla_mode: editing.talla_mode, talla_global: editing.talla_global, talla_values: editing.talla_values,
-      color_mode: editing.color_mode, color_global: editing.color_global, color_values: editing.color_values,
-      material_mode: editing.material_mode, material_global: editing.material_global, material_values: editing.material_values,
-      images: editing.images,
-      updated_at: new Date().toISOString(),
-    };
-    let productId = editing.id;
-    if (productId) {
-      const { error } = await supabase.from('products').update(payload).eq('id', productId);
-      if (error) { showToast('Error guardando producto'); return; }
-    } else {
-      const { data, error } = await supabase.from('products').insert(payload).select().single();
-      if (error || !data) { showToast('Error creando producto'); return; }
-      productId = data.id;
+    try {
+      const payload = {
+        title: editing.title,
+        cost: editing.cost,
+        talla_mode: editing.talla_mode, talla_global: editing.talla_global, talla_values: editing.talla_values,
+        color_mode: editing.color_mode, color_global: editing.color_global, color_values: editing.color_values,
+        material_mode: editing.material_mode, material_global: editing.material_global, material_values: editing.material_values,
+        images: editing.images,
+        updated_at: new Date().toISOString(),
+      };
+      let productId = editing.id;
+      if (productId) {
+        const { error } = await supabase.from('products').update(payload).eq('id', productId);
+        if (error) {
+          console.error('Error actualizando producto:', error);
+          showToast('Error guardando: ' + error.message);
+          return;
+        }
+      } else {
+        const { data, error } = await supabase.from('products').insert(payload).select().single();
+        if (error || !data) {
+          console.error('Error insertando producto:', error);
+          showToast('Error creando: ' + (error?.message || 'Sin datos'));
+          return;
+        }
+        productId = data.id;
+      }
+      const finalVariants = combineVariants(editing, editing.variants);
+      const { error: delErr } = await supabase.from('product_variants').delete().eq('product_id', productId);
+      if (delErr) console.error('Error eliminando variantes previas:', delErr);
+      if (finalVariants.length) {
+        const { error: insErr } = await supabase.from('product_variants').insert(
+          finalVariants.map(v => ({
+            product_id: productId,
+            talla: v.talla, color: v.color, material: v.material,
+            sku: v.sku || `${slugify(editing.title)}-${v.talla}-${v.color}-${v.material}`.slice(0, 60),
+            stock: v.stock, shopify_stock: v.shopify_stock || 0, precio: v.precio,
+          }))
+        );
+        if (insErr) {
+          console.error('Error guardando variantes:', insErr);
+          showToast('Error en variantes: ' + insErr.message);
+          return;
+        }
+      }
+      showToast('Producto guardado ✓');
+      closeEditor();
+      loadData();
+    } catch (e: any) {
+      console.error('Excepción al guardar:', e);
+      showToast('Error al guardar: ' + (e?.message || 'inesperado'));
     }
-    const finalVariants = combineVariants(editing, editing.variants);
-    await supabase.from('product_variants').delete().eq('product_id', productId);
-    if (finalVariants.length) {
-      await supabase.from('product_variants').insert(
-        finalVariants.map(v => ({
-          product_id: productId,
-          talla: v.talla, color: v.color, material: v.material,
-          sku: v.sku || `${slugify(editing.title)}-${v.talla}-${v.color}-${v.material}`.slice(0, 60),
-          stock: v.stock, shopify_stock: v.shopify_stock || 0, precio: v.precio,
-        }))
-      );
-    }
-    showToast('Producto guardado ✓');
-    closeEditor();
-    loadData();
   };
 
   const [confirmModal, setConfirmModal] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -421,21 +443,22 @@ export default function Home() {
       const handle = slugify(p.title);
       p.variants.forEach((v, i) => {
         rows.push({
-          Handle: handle, Title: i === 0 ? p.title : '',
-          'Option1 Name': p.talla_mode === 'multiple' ? 'Talla' : '',
-          'Option1 Value': p.talla_mode === 'multiple' ? v.talla : '',
-          'Option2 Name': p.color_mode === 'multiple' ? 'Color' : '',
-          'Option2 Value': p.color_mode === 'multiple' ? v.color : '',
-          'Option3 Name': p.material_mode === 'multiple' ? 'Material' : '',
-          'Option3 Value': p.material_mode === 'multiple' ? v.material : '',
-          'Variant SKU': v.sku,
+          'Handle': handle,
+          'Título': i === 0 ? p.title : '',
+          'Opción 1 (Talla)': p.talla_mode === 'multiple' ? 'Talla' : '',
+          'Valor Talla': v.talla,
+          'Opción 2 (Color)': p.color_mode === 'multiple' ? 'Color' : '',
+          'Valor Color': v.color,
+          'Opción 3 (Material)': p.material_mode === 'multiple' ? 'Material' : '',
+          'Valor Material': v.material,
+          'SKU': v.sku,
           'Stock General': v.stock,
           'Stock Shopify': v.shopify_stock,
-          'Precio Venta': v.precio,
-          'Costo': p.cost,
-          'Ganancia': v.precio - p.cost,
-          'Image Src': p.images[0] || '',
-          Status: 'active',
+          'Precio Venta ($)': v.precio,
+          'Costo ($)': p.cost,
+          'Ganancia ($)': v.precio - p.cost,
+          'Imagen URL': p.images[0] || '',
+          'Estado': 'Activo',
         });
       });
     });
@@ -452,7 +475,12 @@ export default function Home() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-    XLSX.writeFile(wb, 'inventario.xlsx');
+    const now = new Date();
+    const day = now.getDate();
+    const month = now.getMonth() + 1;
+    const year = String(now.getFullYear()).slice(-2);
+    const filename = `inventario al ${day}-${month}-${year}.xlsx`;
+    XLSX.writeFile(wb, filename);
     setExcelPreviewOpen(false);
   };
 
