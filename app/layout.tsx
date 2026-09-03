@@ -1,28 +1,21 @@
+import type { Metadata } from 'next';
 import './globals.css';
 
-export const metadata = {
-  title: 'Inventario',
-  description: 'Inventario de tienda',
-  manifest: '/manifest.json',
+export const metadata: Metadata = {
+  title: 'MAX VENTAS | Tienda Oficial',
+  description: 'Tienda en línea de MAX VENTAS con envíos a todo Estados Unidos',
 };
 
-export const viewport = {
-  themeColor: '#b8935a',
-  width: 'device-width',
-  initialScale: 1,
-  viewportFit: 'cover',
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="es">
-      <head>
-        <link rel="icon" href="/icon-192.png" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-      </head>
-      <body>{children}</body>
+      <body className="antialiased bg-white text-gray-900 min-h-screen">
+        {children}
+      </body>
     </html>
   );
 }

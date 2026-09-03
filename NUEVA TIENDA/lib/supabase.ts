@@ -1,8 +1,8 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createBrowserClient } from '@supabase/ssr';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder';
 
 // Cliente para el navegador
 export const createClient = () => {
@@ -20,7 +20,9 @@ export const createServerClient = () => {
 export const createServiceClient = () => {
   return createSupabaseClient(
     supabaseUrl,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? supabaseKey,
     { auth: { persistSession: false } }
   );
 };
+
+export const supabase = createSupabaseClient(supabaseUrl, supabaseKey);

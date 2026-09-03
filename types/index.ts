@@ -102,5 +102,4 @@ export interface StoreSettings {
   banner_subtitle?: string;
   banner_button_text?: string;
   banner_button_link?: string;
-  whatsapp_number?: string;
 }
