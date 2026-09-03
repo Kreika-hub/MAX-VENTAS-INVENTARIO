@@ -1,6 +1,28 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder';
 
-export const supabase = createClient(url, anonKey);
+// Cliente para el navegador
+export const createClient = () => {
+  return createBrowserClient(supabaseUrl, supabaseKey);
+};
+
+// Cliente para el servidor (API routes, Server Components)
+export const createServerClient = () => {
+  return createSupabaseClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false }
+  });
+};
+
+// Cliente con service role (solo para API routes seguras)
+export const createServiceClient = () => {
+  return createSupabaseClient(
+    supabaseUrl,
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? supabaseKey,
+    { auth: { persistSession: false } }
+  );
+};
+
+export const supabase = createSupabaseClient(supabaseUrl, supabaseKey);
