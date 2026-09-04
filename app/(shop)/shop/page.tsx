@@ -3,63 +3,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 import { ProductCard } from '@/components/shop/ProductCard';
-import { Sparkles, Search, SlidersHorizontal, PackageX } from 'lucide-react';
-import Link from 'next/link';
-
-// Productos de muestra iniciales ultra-rápidos (por si la DB aún no tiene registros)
-const SAMPLE_PRODUCTS = [
-  {
-    id: 'demo-1',
-    name: 'Franela Venezuela Raíces Floral',
-    slug: 'franela-venezuela-raices-floral',
-    price: 35.00,
-    cost: 12.00,
-    stock: 25,
-    weight: 0.8,
-    category: 'Franelas',
-    images: ['https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80'],
-    is_active: true,
-  },
-  {
-    id: 'demo-2',
-    name: 'Crop Top Venezuela Vintage 1980',
-    slug: 'crop-top-venezuela-vintage',
-    price: 28.00,
-    cost: 10.00,
-    stock: 18,
-    weight: 0.6,
-    category: 'Tops',
-    images: ['https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=600&q=80'],
-    is_active: true,
-  },
-  {
-    id: 'demo-3',
-    name: 'Camiseta Estampada Guacamaya Tricolor',
-    slug: 'camiseta-estampada-guacamaya',
-    price: 32.00,
-    cost: 11.00,
-    stock: 30,
-    weight: 0.8,
-    category: 'Franelas',
-    images: ['https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=600&q=80'],
-    is_active: true,
-  },
-  {
-    id: 'demo-4',
-    name: 'Gorra Clásica Bordada Vino Tinto',
-    slug: 'gorra-clasica-bordada',
-    price: 24.50,
-    cost: 8.00,
-    stock: 15,
-    weight: 0.5,
-    category: 'Accesorios',
-    images: ['https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=600&q=80'],
-    is_active: true,
-  },
-];
+import { Sparkles, Search, PackageX } from 'lucide-react';
 
 export default function ShopPage() {
-  const [products, setProducts] = useState<any[]>(SAMPLE_PRODUCTS);
+  const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -71,12 +18,22 @@ export default function ShopPage() {
         const supabase = createClient();
         const { data, error } = await supabase
           .from('products')
-          .select('*')
+          .select('*, product_variants(*)')
           .eq('is_active', true)
           .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          setProducts(data);
+        if (!error && data) {
+          const mapped = data.map((p: any) => {
+            const rawPrice = p.price ?? p.precio ?? p.price_usd ?? p.unit_price ?? p.product_variants?.[0]?.precio ?? (p.cost ? p.cost * 2 : 0);
+            const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
+            return {
+              ...p,
+              name: p.name || p.title || 'Prenda Exclusiva',
+              price: numPrice,
+              slug: p.slug || p.id,
+            };
+          });
+          setProducts(mapped);
         }
       } catch (e) {
         console.warn('Error cargando productos:', e);
@@ -187,7 +144,17 @@ export default function ShopPage() {
         </div>
 
         {/* Grilla de Productos */}
-        {filteredProducts.length === 0 ? (
+        {loading ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} className="animate-pulse bg-white p-3 rounded-2xl border border-[#e7ddcd] space-y-3">
+                <div className="aspect-square bg-[#f7f1e8] rounded-xl" />
+                <div className="h-4 bg-[#f7f1e8] rounded-md w-3/4" />
+                <div className="h-4 bg-[#f7f1e8] rounded-md w-1/3" />
+              </div>
+            ))}
+          </div>
+        ) : filteredProducts.length === 0 ? (
           <div className="bg-white border border-[#e7ddcd] rounded-3xl p-16 text-center space-y-3">
             <PackageX className="w-12 h-12 text-[#8a7d6c] mx-auto opacity-50" />
             <h3 className="text-base font-bold text-[#2b241c]">No encontramos productos</h3>

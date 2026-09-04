@@ -14,7 +14,7 @@ export default async function HomePage() {
     const [productsRes, settingsRes] = await Promise.allSettled([
       supabase
         .from('products')
-        .select('*')
+        .select('*, product_variants(*)')
         .eq('is_active', true)
         .order('created_at', { ascending: false })
         .limit(8),
@@ -25,7 +25,16 @@ export default async function HomePage() {
     ]);
 
     if (productsRes.status === 'fulfilled' && productsRes.value?.data) {
-      products = productsRes.value.data;
+      products = productsRes.value.data.map((p: any) => {
+        const rawPrice = p.price ?? p.precio ?? p.price_usd ?? p.unit_price ?? p.product_variants?.[0]?.precio ?? (p.cost ? p.cost * 2 : 0);
+        const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
+        return {
+          ...p,
+          name: p.name || p.title || 'Prenda Exclusiva',
+          price: numPrice,
+          slug: p.slug || p.id,
+        };
+      });
     }
     if (settingsRes.status === 'fulfilled' && settingsRes.value?.data) {
       settings = settingsRes.value.data;
@@ -46,27 +55,27 @@ export default async function HomePage() {
       />
 
       {/* Featured Products */}
-      <section className="max-w-7xl mx-auto px-4 py-16">
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-16">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="text-2xl font-bold">Productos Destacados</h2>
-            <p className="text-sm text-gray-500">Lo más vendido de nuestra tienda</p>
+            <h2 className="text-2xl font-bold text-[#2b241c]">Productos Destacados</h2>
+            <p className="text-xs sm:text-sm text-[#8a7d6c]">Lo más vendido de nuestra tienda</p>
           </div>
           <Link
             href="/shop"
-            className="text-sm font-semibold hover:underline flex items-center gap-1"
+            className="text-xs sm:text-sm font-bold text-[#b8935a] hover:underline flex items-center gap-1"
           >
             Ver todo el catálogo →
           </Link>
         </div>
 
         {products.length === 0 ? (
-          <div className="bg-gray-50 border border-dashed rounded-2xl p-12 text-center text-gray-500">
-            <p className="font-medium text-gray-700 mb-1">No hay productos destacados activos.</p>
-            <p className="text-sm">Puedes publicar productos desde el Panel de Administración.</p>
+          <div className="bg-[#f7f1e8]/50 border border-dashed border-[#e7ddcd] rounded-3xl p-12 text-center text-[#8a7d6c]">
+            <p className="font-bold text-sm text-[#2b241c] mb-1">No hay productos destacados activos.</p>
+            <p className="text-xs">Puedes publicar productos desde el Panel de Administración.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
             {products.map((product, i) => (
               <ProductCard key={product.id} product={product} index={i} />
             ))}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useCart } from '@/stores/cart';
@@ -15,20 +15,57 @@ export default function ProductDetailPage({ params }: { params: { slug: string }
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  useState(() => {
-    const fetchProduct = async () => {
-      const { createClient } = await import('@/lib/supabase');
-      const supabase = createClient();
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .eq('slug', params.slug)
-        .single();
-      setProduct(data);
-      setLoading(false);
-    };
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchProduct() {
+      try {
+        const { createClient } = await import('@/lib/supabase');
+        const supabase = createClient();
+        
+        // 1. Intentar buscar por slug exacto
+        let { data, error } = await supabase
+          .from('products')
+          .select('*, product_variants(*)')
+          .eq('slug', params.slug)
+          .maybeSingle();
+
+        // 2. Si no encuentra por slug, buscar por ID o coincidencia parcial
+        if (!data) {
+          const possibleId = params.slug.includes('--') 
+            ? params.slug.split('--').pop() 
+            : params.slug;
+            
+          const res = await supabase
+            .from('products')
+            .select('*, product_variants(*)')
+            .or(`id.eq.${possibleId},slug.ilike.%${params.slug}%`)
+            .limit(1)
+            .maybeSingle();
+            
+          data = res.data;
+        }
+
+        if (isMounted && data) {
+          const rawPrice = data.price ?? data.precio ?? data.price_usd ?? data.unit_price ?? data.product_variants?.[0]?.precio ?? (data.cost ? data.cost * 2 : 0);
+          const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
+          
+          setProduct({
+            ...data,
+            name: data.name || data.title || 'Prenda Exclusiva',
+            price: numPrice,
+            images: Array.isArray(data.images) && data.images.length > 0 ? data.images : [],
+          });
+        }
+      } catch (err) {
+        console.error('Error cargando detalle de producto:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
     fetchProduct();
-  });
+    return () => { isMounted = false; };
+  }, [params.slug]);
 
   const handleAddToCart = () => {
     if (!product) return;
@@ -46,10 +83,10 @@ export default function ProductDetailPage({ params }: { params: { slug: string }
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-24 text-center">
-        <div className="animate-pulse space-y-4">
-          <div className="bg-gray-200 h-96 rounded-2xl" />
-          <div className="bg-gray-200 h-8 w-1/2 rounded" />
-          <div className="bg-gray-200 h-4 w-1/3 rounded" />
+        <div className="animate-pulse space-y-4 max-w-md mx-auto">
+          <div className="bg-[#f7f1e8] h-96 rounded-3xl border border-[#e7ddcd]" />
+          <div className="bg-[#f7f1e8] h-8 w-3/4 mx-auto rounded-xl" />
+          <div className="bg-[#f7f1e8] h-4 w-1/2 mx-auto rounded-xl" />
         </div>
       </div>
     );
@@ -57,60 +94,125 @@ export default function ProductDetailPage({ params }: { params: { slug: string }
 
   if (!product) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-24 text-center">
-        <h1 className="text-2xl font-bold mb-4">Producto no encontrado</h1>
-        <button onClick={() => router.push('/shop')} className="bg-black text-white px-6 py-3 rounded-xl">
-          Volver a la tienda
-        </button>
+      <div className="max-w-6xl mx-auto px-4 py-24 text-center space-y-4">
+        <h1 className="text-2xl font-bold text-[#2b241c]">Producto no encontrado</h1>
+        <p className="text-xs text-[#8a7d6c]">Es posible que esta prenda haya sido removida o cambiado de enlace.</p>
+        <div>
+          <button 
+            onClick={() => router.push('/shop')} 
+            className="bg-[#b8935a] hover:bg-[#9c7a45] text-white px-6 py-3 rounded-2xl font-bold text-xs transition"
+          >
+            Volver al Catálogo
+          </button>
+        </div>
       </div>
     );
   }
 
+  const firstImage = product.images?.[0] || '';
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-12">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12">
       <button
         onClick={() => router.push('/shop')}
-        className="flex items-center gap-2 text-sm text-gray-600 hover:text-black mb-8 transition"
+        className="inline-flex items-center gap-2 text-xs font-semibold text-[#8a7d6c] hover:text-[#2b241c] mb-8 transition py-1"
       >
         <ArrowLeft className="w-4 h-4" />
-        Volver a la tienda
+        Volver al Catálogo
       </button>
 
-      <div className="grid md:grid-cols-2 gap-12">
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-          <div className="aspect-square bg-gray-100 rounded-2xl overflow-hidden relative">
-            {product.images?.[0] ? (
-              <Image src={product.images[0]} alt={product.name} fill className="object-cover" priority />
+      <div className="grid md:grid-cols-2 gap-10 lg:gap-14 items-start">
+        {/* Contenedor de Imagen con clases estáticas relativas y dimensiones fijas */}
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          className="w-full flex justify-center"
+        >
+          <div className="relative w-full max-w-md aspect-square bg-[#f7f1e8] rounded-3xl overflow-hidden border border-[#e7ddcd] shadow-sm flex items-center justify-center">
+            {firstImage ? (
+              <Image 
+                src={firstImage} 
+                alt={product.name} 
+                fill 
+                className="object-cover" 
+                priority 
+                sizes="(max-width: 768px) 100vw, 500px"
+              />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-400">Sin imagen</div>
+              <div className="w-full h-full flex items-center justify-center text-xs text-[#8a7d6c]">
+                Sin imagen disponible
+              </div>
             )}
           </div>
         </motion.div>
 
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="space-y-6">
-          <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">{product.category}</p>
-            <h1 className="text-3xl font-bold mb-2">{product.name}</h1>
-            <p className="text-2xl font-semibold">{formatPrice(product.price)}</p>
+        {/* Información del Producto */}
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          transition={{ delay: 0.1 }} 
+          className="space-y-6"
+        >
+          <div className="space-y-2">
+            {product.category && (
+              <span className="inline-block text-[11px] font-bold text-[#b8935a] uppercase tracking-wider bg-[#f7f1e8] px-3 py-1 rounded-full border border-[#e7ddcd]">
+                {product.category}
+              </span>
+            )}
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2b241c] leading-tight">
+              {product.name}
+            </h1>
+            <p className="text-2xl font-black text-[#b8935a]">
+              {formatPrice(product.price)}
+            </p>
           </div>
-          <div className="prose prose-sm text-gray-600"><p>{product.description}</p></div>
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Truck className="w-4 h-4" />
-            <span>Envío calculado en el checkout</span>
-          </div>
-          {product.stock <= 5 && product.stock > 0 && (
-            <p className="text-sm text-orange-600 font-medium">⚡ Solo quedan {product.stock} unidades</p>
-          )}
-          {product.stock === 0 && <p className="text-sm text-red-600 font-medium">❌ Agotado</p>}
 
-          <div className="flex items-center gap-4 pt-4">
-            <div className="flex items-center border rounded-xl">
-              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="px-4 py-3 hover:bg-gray-50"><Minus className="w-4 h-4" /></button>
-              <span className="w-12 text-center font-medium">{quantity}</span>
-              <button onClick={() => setQuantity(Math.min(product.stock, quantity + 1))} className="px-4 py-3 hover:bg-gray-50"><Plus className="w-4 h-4" /></button>
+          {product.description && (
+            <div className="text-xs sm:text-sm text-[#8a7d6c] leading-relaxed border-t border-b border-[#e7ddcd]/70 py-4">
+              <p>{product.description}</p>
             </div>
-            <motion.button whileTap={{ scale: 0.98 }} onClick={handleAddToCart} disabled={product.stock === 0}
-              className="flex-1 bg-black text-white py-3 px-6 rounded-xl font-medium hover:bg-gray-800 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          )}
+
+          <div className="flex items-center gap-2.5 text-xs text-[#8a7d6c] font-medium bg-[#f7f1e8]/60 p-3 rounded-2xl border border-[#e7ddcd]">
+            <Truck className="w-4 h-4 text-[#b8935a] flex-shrink-0" />
+            <span>Envíos rápidos a todo Estados Unidos · Calculado en el checkout</span>
+          </div>
+
+          {product.stock <= 5 && product.stock > 0 && (
+            <p className="text-xs text-orange-600 font-bold flex items-center gap-1.5">
+              ⚡ ¡Solo quedan {product.stock} unidades disponibles!
+            </p>
+          )}
+          {product.stock === 0 && (
+            <p className="text-xs text-red-600 font-bold">
+              ❌ Agotado temporalmente
+            </p>
+          )}
+
+          {/* Selector de Cantidad y Botón de Compra */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-2">
+            <div className="flex items-center justify-between border border-[#e7ddcd] rounded-2xl bg-[#f7f1e8]/40 p-1 w-full sm:w-36">
+              <button 
+                onClick={() => setQuantity(Math.max(1, quantity - 1))} 
+                className="w-9 h-9 rounded-xl bg-white flex items-center justify-center hover:bg-gray-100 text-[#2b241c] transition border border-[#e7ddcd]/50 shadow-sm"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="font-extrabold text-sm text-[#2b241c] px-3">{quantity}</span>
+              <button 
+                onClick={() => setQuantity(Math.min(product.stock || 99, quantity + 1))} 
+                className="w-9 h-9 rounded-xl bg-white flex items-center justify-center hover:bg-gray-100 text-[#2b241c] transition border border-[#e7ddcd]/50 shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <motion.button 
+              whileTap={{ scale: 0.98 }} 
+              onClick={handleAddToCart} 
+              disabled={product.stock === 0}
+              className="flex-1 bg-[#b8935a] hover:bg-[#9c7a45] text-white py-4 px-8 rounded-2xl font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+            >
               <ShoppingBag className="w-4 h-4" />
               {product.stock === 0 ? 'Agotado' : 'Agregar al carrito'}
             </motion.button>

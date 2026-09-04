@@ -4,19 +4,22 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { useCart } from '@/stores/cart';
 import { formatPrice } from '@/lib/utils';
-import { ShoppingBag, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import Image from 'next/image';
 import { Product } from '@/types';
 
 interface ProductCardProps {
-  product: Product;
+  product: Product | any;
   index?: number;
 }
 
 export function ProductCard({ product, index = 0 }: ProductCardProps) {
   const { addItem, openCart } = useCart();
-  const displayName = product.name || (product as any).title || 'Producto';
+  const displayName = product.name || product.title || 'Prenda Exclusiva';
   const firstImage = Array.isArray(product.images) && product.images[0] ? product.images[0] : '';
+  
+  const rawPrice = product.price ?? product.precio ?? product.price_usd ?? product.unit_price ?? product.product_variants?.[0]?.precio ?? (product.cost ? product.cost * 2 : 0);
+  const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -24,7 +27,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
     addItem({
       productId: product.id,
       name: displayName,
-      price: product.price || 0,
+      price: numPrice,
       quantity: 1,
       image: firstImage,
       weight: product.weight || 1,
@@ -32,21 +35,24 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
     openCart();
   };
 
+  const productUrl = `/product/${product.slug || product.id}`;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.4 }}
       whileHover={{ y: -5 }}
-      className="group bg-white rounded-2xl border border-[#e7ddcd]/70 p-2.5 shadow-[0_2px_10px_rgba(43,36,28,0.03)] hover:shadow-md hover:border-[#b8935a]/50 transition-all duration-300"
+      className="group bg-white rounded-2xl border border-[#e7ddcd]/70 p-2.5 shadow-[0_2px_10px_rgba(43,36,28,0.03)] hover:shadow-md hover:border-[#b8935a]/50 transition-all duration-300 flex flex-col justify-between"
     >
-      <Link href={`/product/${product.slug || product.id}`} className="block">
-        <div className="relative aspect-square bg-[#f7f1e8] rounded-xl overflow-hidden mb-2.5 border border-[#e7ddcd]/40">
+      <Link href={productUrl} className="block">
+        <div className="relative w-full aspect-square bg-[#f7f1e8] rounded-xl overflow-hidden mb-2.5 border border-[#e7ddcd]/40 flex items-center justify-center">
           {firstImage ? (
             <Image
               src={firstImage}
               alt={displayName}
               fill
+              sizes="(max-width: 768px) 50vw, 300px"
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
@@ -70,7 +76,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
             {displayName}
           </h3>
           <p className="text-sm font-extrabold text-[#b8935a]">
-            {formatPrice(product.price || 0)}
+            {formatPrice(numPrice)}
           </p>
         </div>
       </Link>

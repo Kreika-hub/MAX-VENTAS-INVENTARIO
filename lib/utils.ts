@@ -5,11 +5,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatPrice(price: number): string {
+export function formatPrice(price: number | string | null | undefined): string {
+  const num = typeof price === 'number' ? price : parseFloat(String(price ?? 0));
+  const validNum = isNaN(num) ? 0 : num;
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-  }).format(price);
+  }).format(validNum);
 }
 
 export function generateOrderNumber(count: number): string {
