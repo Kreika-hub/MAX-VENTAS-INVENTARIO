@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useCart } from '@/stores/cart';
-import { formatPrice } from '@/lib/utils';
+import { formatPrice, resolvePrice } from '@/lib/utils';
 import { Minus, Plus, ShoppingBag, ArrowLeft, Truck } from 'lucide-react';
 import Image from 'next/image';
 
@@ -46,13 +46,10 @@ export default function ProductDetailPage({ params }: { params: { slug: string }
         }
 
         if (isMounted && data) {
-          const rawPrice = data.price ?? data.precio ?? data.price_usd ?? data.unit_price ?? data.product_variants?.[0]?.precio ?? (data.cost ? data.cost * 2 : 0);
-          const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
-          
           setProduct({
             ...data,
             name: data.name || data.title || 'Prenda Exclusiva',
-            price: numPrice,
+            price: resolvePrice(data),
             images: Array.isArray(data.images) && data.images.length > 0 ? data.images : [],
           });
         }

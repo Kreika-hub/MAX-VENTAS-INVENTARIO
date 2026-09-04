@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { useCart } from '@/stores/cart';
-import { formatPrice } from '@/lib/utils';
+import { formatPrice, resolvePrice } from '@/lib/utils';
 import { Plus } from 'lucide-react';
 import Image from 'next/image';
 import { Product } from '@/types';
@@ -17,9 +17,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
   const { addItem, openCart } = useCart();
   const displayName = product.name || product.title || 'Prenda Exclusiva';
   const firstImage = Array.isArray(product.images) && product.images[0] ? product.images[0] : '';
-  
-  const rawPrice = product.price ?? product.precio ?? product.price_usd ?? product.unit_price ?? product.product_variants?.[0]?.precio ?? (product.cost ? product.cost * 2 : 0);
-  const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
+  const finalPrice = resolvePrice(product);
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -27,7 +25,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
     addItem({
       productId: product.id,
       name: displayName,
-      price: numPrice,
+      price: finalPrice,
       quantity: 1,
       image: firstImage,
       weight: product.weight || 1,
@@ -76,7 +74,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
             {displayName}
           </h3>
           <p className="text-sm font-extrabold text-[#b8935a]">
-            {formatPrice(numPrice)}
+            {formatPrice(finalPrice)}
           </p>
         </div>
       </Link>

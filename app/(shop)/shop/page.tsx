@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 import { ProductCard } from '@/components/shop/ProductCard';
+import { resolvePrice } from '@/lib/utils';
 import { Sparkles, Search, PackageX } from 'lucide-react';
 
 export default function ShopPage() {
@@ -23,16 +24,12 @@ export default function ShopPage() {
           .order('created_at', { ascending: false });
 
         if (!error && data) {
-          const mapped = data.map((p: any) => {
-            const rawPrice = p.price ?? p.precio ?? p.price_usd ?? p.unit_price ?? p.product_variants?.[0]?.precio ?? (p.cost ? p.cost * 2 : 0);
-            const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice) || 0;
-            return {
-              ...p,
-              name: p.name || p.title || 'Prenda Exclusiva',
-              price: numPrice,
-              slug: p.slug || p.id,
-            };
-          });
+          const mapped = data.map((p: any) => ({
+            ...p,
+            name: p.name || p.title || 'Prenda Exclusiva',
+            price: resolvePrice(p),
+            slug: p.slug || p.id,
+          }));
           setProducts(mapped);
         }
       } catch (e) {
